@@ -130,7 +130,7 @@ DEFAULT_HEADERS = {
     'Accept-Encoding': 'gzip, deflate, br, zstd',
     'Content-Type': 'text/plain;charset=UTF-8',
     'Connection': 'keep-alive',
-    'Origin': 'https://grok.com',
+    'Origin': 'https://grok-gateway.openoai.net',
     'Priority': 'u=1, i',
     'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36',
     'Sec-Ch-Ua': '"Not(A:Brand";v="99", "Google Chrome";v="133", "Chromium";v="133"',
@@ -512,7 +512,7 @@ class GrokApiClient:
             cookie = f"{Utils.create_auth_headers(model, True)};{CONFIG['SERVER']['CF_CLEARANCE']}" 
             proxy_options = Utils.get_proxy_options()
             response = curl_requests.post(
-                "https://grok.com/rest/app-chat/upload-file",
+                "https://grok-gateway.openoai.net/rest/app-chat/upload-file",
                 headers={
                     **DEFAULT_HEADERS,
                     "Cookie":cookie
