@@ -95,7 +95,7 @@ CONFIG = {
     "API": {
         "IS_TEMP_CONVERSATION": os.environ.get("IS_TEMP_CONVERSATION", "true").lower() == "true",
         "IS_CUSTOM_SSO": os.environ.get("IS_CUSTOM_SSO", "false").lower() == "true",
-        "BASE_URL": "https://grok.oaiopen.cn",
+        "BASE_URL": "https://grok.com",
         "API_KEY": os.environ.get("API_KEY", "sk-123456"),
         "SIGNATURE_COOKIE": None,
         "PICGO_KEY": os.environ.get("PICGO_KEY") or None,
@@ -130,7 +130,7 @@ DEFAULT_HEADERS = {
     'Accept-Encoding': 'gzip, deflate, br, zstd',
     'Content-Type': 'text/plain;charset=UTF-8',
     'Connection': 'keep-alive',
-    'Origin': 'https://grok.oaiopen.cn',
+    'Origin': 'https://grok.com',
     'Priority': 'u=1, i',
     'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36',
     'Sec-Ch-Ua': '"Not(A:Brand";v="99", "Google Chrome";v="133", "Chromium";v="133"',
@@ -512,7 +512,7 @@ class GrokApiClient:
             cookie = f"{Utils.create_auth_headers(model, True)};{CONFIG['SERVER']['CF_CLEARANCE']}" 
             proxy_options = Utils.get_proxy_options()
             response = curl_requests.post(
-                "https://grok.oaiopen.cn/rest/app-chat/upload-file",
+                "https://grok.com/rest/app-chat/upload-file",
                 headers={
                     **DEFAULT_HEADERS,
                     "Cookie":cookie
