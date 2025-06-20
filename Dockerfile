@@ -4,6 +4,8 @@ WORKDIR /app
 
 RUN pip install --no-cache-dir flask requests curl_cffi werkzeug loguru 
 
+VOLUME ["/data"]
+
 COPY . .
 
 ENV PORT=3000

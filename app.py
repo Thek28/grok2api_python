@@ -7,6 +7,7 @@ import sys
 import inspect
 import secrets
 from loguru import logger
+from pathlib import Path
 
 import requests
 from flask import Flask, request, Response, jsonify, stream_with_context, render_template, redirect, session
@@ -79,8 +80,10 @@ class Logger:
         self.logger.bind(**caller_info).info(f"请求: {request.method} {request.path}", "Request")
 
 logger = Logger(level="INFO")
+DATA_DIR = Path("/data")
 
-
+if not DATA_DIR.exists():
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
 CONFIG = {
     "MODELS": {
         'grok-2': 'grok-latest',
@@ -90,6 +93,7 @@ CONFIG = {
         "grok-3-search": "grok-3",
         "grok-3-imageGen": "grok-3",
         "grok-3-deepsearch": "grok-3",
+        "grok-3-deepersearch": "grok-3",
         "grok-3-reasoning": "grok-3"
     },
     "API": {
@@ -116,6 +120,7 @@ CONFIG = {
         "RETRYSWITCH": False,
         "MAX_ATTEMPTS": 2
     },
+    "TOKEN_STATUS_FILE": str(DATA_DIR / "token_status.json"),
     "SHOW_THINKING": os.environ.get("SHOW_THINKING") == "true",
     "IS_THINKING": False,
     "IS_IMG_GEN": False,
@@ -161,6 +166,10 @@ class AuthTokenManager:
                 "RequestFrequency": 10,
                 "ExpirationTime": 24 * 60 * 60 * 1000  # 24小时
             },
+            "grok-3-deepersearch": {
+                "RequestFrequency": 3,
+                "ExpirationTime": 24 * 60 * 60 * 1000  # 24小时
+            },
             "grok-3-reasoning": {
                 "RequestFrequency": 10,
                 "ExpirationTime": 24 * 60 * 60 * 1000  # 24小时
@@ -168,8 +177,25 @@ class AuthTokenManager:
         }
         self.token_reset_switch = False
         self.token_reset_timer = None
-
-    def add_token(self, token):
+        self.load_token_status() # 加载令牌状态
+    def save_token_status(self):
+        try:        
+            with open(CONFIG["TOKEN_STATUS_FILE"], 'w', encoding='utf-8') as f:
+                json.dump(self.token_status_map, f, indent=2, ensure_ascii=False)
+            logger.info("令牌状态已保存到配置文件", "TokenManager")
+        except Exception as error:
+            logger.error(f"保存令牌状态失败: {str(error)}", "TokenManager")
+            
+    def load_token_status(self):
+        try:
+            token_status_file = Path(CONFIG["TOKEN_STATUS_FILE"])
+            if token_status_file.exists():
+                with open(token_status_file, 'r', encoding='utf-8') as f:
+                    self.token_status_map = json.load(f)
+                logger.info("已从配置文件加载令牌状态", "TokenManager")
+        except Exception as error:
+            logger.error(f"加载令牌状态失败: {str(error)}", "TokenManager")
+    def add_token(self, token,isinitialization=False):
         sso = token.split("sso=")[1].split(";")[0]
         for model in self.model_config.keys():
             if model not in self.token_model_map:
@@ -193,6 +219,8 @@ class AuthTokenManager:
                         "invalidatedTime": None,
                         "totalRequestCount": 0
                     }
+        if not isinitialization:
+            self.save_token_status()
 
     def set_token(self, token):
         models = list(self.model_config.keys())
@@ -218,6 +246,8 @@ class AuthTokenManager:
 
             if sso in self.token_status_map:
                 del self.token_status_map[sso]
+            
+            self.save_token_status()
 
             logger.info(f"令牌已成功移除: {token}", "TokenManager")
             return True
@@ -288,6 +318,8 @@ class AuthTokenManager:
                     self.token_status_map[sso][normalized_model]["isValid"] = False
                     self.token_status_map[sso][normalized_model]["invalidatedTime"] = int(time.time() * 1000)
                 self.token_status_map[sso][normalized_model]["totalRequestCount"] += 1
+
+                self.save_token_status()
 
             return token_entry["token"]
 
@@ -578,13 +610,33 @@ class GrokApiClient:
         except Exception as error:
             logger.error(str(error), "Server")
             return ''
+    # def convert_system_messages(self, messages):
+    #     try:
+    #         system_prompt = []
+    #         i = 0
+    #         while i < len(messages):
+    #             if messages[i].get('role') != 'system':
+    #                 break
 
+    #             system_prompt.append(self.process_message_content(messages[i].get('content')))
+    #             i += 1
+
+    #         messages = messages[i:]
+    #         system_prompt = '\n'.join(system_prompt)
+
+    #         if not messages:
+    #             raise ValueError("没有找到用户或者AI消息")
+    #         return {"system_prompt":system_prompt,"messages":messages}
+    #     except Exception as error:
+    #         logger.error(str(error), "Server")
+    #         raise ValueError(error)
     def prepare_chat_request(self, request):
         if ((request["model"] == 'grok-2-imageGen' or request["model"] == 'grok-3-imageGen') and
             not CONFIG["API"]["PICGO_KEY"] and not CONFIG["API"]["TUMY_KEY"] and
             request.get("stream", False)):
             raise ValueError("该模型流式输出需要配置PICGO或者TUMY图床密钥!")
 
+        # system_message, todo_messages = self.convert_system_messages(request["messages"]).values()
         todo_messages = request["messages"]
         if request["model"] in ['grok-2-imageGen', 'grok-3-imageGen', 'grok-3-deepsearch']:
             last_message = todo_messages[-1]
@@ -599,6 +651,11 @@ class GrokApiClient:
         convert_to_file = False
         last_message_content = ''
         search = request["model"] in ['grok-2-search', 'grok-3-search']
+        deepsearchPreset = ''
+        if request["model"] == 'grok-3-deepsearch':
+            deepsearchPreset = 'default'
+        elif request["model"] == 'grok-3-deepersearch':
+            deepsearchPreset = 'deeper'
 
         # 移除<think>标签及其内容和base64图片
         def remove_think_tags(text):
@@ -622,7 +679,6 @@ class GrokApiClient:
                 elif content["type"] == 'text':
                     return remove_think_tags(content["text"])
             return remove_think_tags(self.process_message_content(content))
-
         for current in todo_messages:
             role = 'assistant' if current["role"] == 'assistant' else 'user'
             is_last_message = current == todo_messages[-1]
@@ -694,11 +750,11 @@ class GrokApiClient:
                 "xPostAnalyze": search
             },
             "enableSideBySide": True,
-            "isPreset": False,
             "sendFinalMetadata": True,
-            "customInstructions": "",
-            "deepsearchPreset": "default" if request["model"] == 'grok-3-deepsearch' else "",
-            "isReasoning": request["model"] == 'grok-3-reasoning'
+            "customPersonality": "",
+            "deepsearchPreset": deepsearchPreset,
+            "isReasoning": request["model"] == 'grok-3-reasoning',
+            "disableTextFollowUps": True
         }
 
 class MessageProcessor:
@@ -753,7 +809,7 @@ def process_model_response(response, model):
             result["token"] = response.get("token")
     elif model == 'grok-3':
         result["token"] = response.get("token")
-    elif model == 'grok-3-deepsearch':
+    elif model in ['grok-3-deepsearch', 'grok-3-deepersearch']:
         if response.get("messageStepId") and not CONFIG["SHOW_THINKING"]:
             return result
         if response.get("messageStepId") and not CONFIG["IS_THINKING"]:
@@ -763,7 +819,11 @@ def process_model_response(response, model):
             result["token"] = "</think>" + response.get("token", "")
             CONFIG["IS_THINKING"] = False
         elif (response.get("messageStepId") and CONFIG["IS_THINKING"] and response.get("messageTag") == "assistant") or response.get("messageTag") == "final":
-            result["token"] = response.get("token")
+            result["token"] = response.get("token","")
+        elif (CONFIG["IS_THINKING"] and response.get("token","").get("action","") == "webSearch"):
+            result["token"] = response.get("token","").get("action_input","").get("query","")            
+        elif (CONFIG["IS_THINKING"] and response.get("webSearchResults")):
+            result["token"] = Utils.organize_search_results(response['webSearchResults'])
     elif model == 'grok-3-reasoning':
         if response.get("isThinking") and not CONFIG["SHOW_THINKING"]:
             return result
@@ -927,6 +987,7 @@ def handle_stream_response(response, model):
                 continue
             try:
                 line_json = json.loads(chunk.decode("utf-8").strip())
+                print(line_json)
                 if line_json.get("error"):
                     logger.error(json.dumps(line_json, indent=2), "Server")
                     yield json.dumps({"error": "RateLimitError"}) + "\n\n"
@@ -961,9 +1022,11 @@ def handle_stream_response(response, model):
 def initialization():
     sso_array = os.environ.get("SSO", "").split(',')
     logger.info("开始加载令牌", "Server")
+    token_manager.load_token_status()
     for sso in sso_array:
         if sso:
-            token_manager.add_token(f"sso-rw={sso};sso={sso}")
+            token_manager.add_token(f"sso-rw={sso};sso={sso}",True)
+    token_manager.save_token_status()
 
     logger.info(f"成功加载令牌: {json.dumps(token_manager.get_all_tokens(), indent=2)}", "Server")
     logger.info(f"令牌加载完成，共加载: {len(token_manager.get_all_tokens())}个令牌", "Server")
@@ -1138,7 +1201,7 @@ def chat_completions():
         retry_count = 0
         grok_client = GrokApiClient(model)
         request_payload = grok_client.prepare_chat_request(data)
-        
+        logger.info(json.dumps(request_payload,indent=2))
 
         while retry_count < CONFIG["RETRY"]["MAX_ATTEMPTS"]:
             retry_count += 1
@@ -1196,6 +1259,9 @@ def chat_completions():
                     token_manager.reduce_token_request_count(model,1)#重置去除当前因为错误未成功请求的次数，确保不会因为错误未成功请求的次数导致次数上限
                     if token_manager.get_token_count_for_model(model) == 0:
                         raise ValueError(f"{model} 次数已达上限，请切换其他模型或者重新对话")
+                    print("状态码:", response.status_code)
+                    print("响应头:", response.headers)
+                    print("响应内容:", response.text)
                     raise ValueError(f"IP暂时被封无法破盾，请稍后重试或者更换ip")
                 elif response.status_code == 429:
                     response_status_code = 429
