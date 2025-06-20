@@ -99,7 +99,7 @@ CONFIG = {
     "API": {
         "IS_TEMP_CONVERSATION": os.environ.get("IS_TEMP_CONVERSATION", "true").lower() == "true",
         "IS_CUSTOM_SSO": os.environ.get("IS_CUSTOM_SSO", "false").lower() == "true",
-        "BASE_URL": "https://grok.com",
+        "BASE_URL": "https://grok2api.xyhelper-gateway.com",
         "API_KEY": os.environ.get("API_KEY", "sk-123456"),
         "SIGNATURE_COOKIE": None,
         "PICGO_KEY": os.environ.get("PICGO_KEY") or None,
